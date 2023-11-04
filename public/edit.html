@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document</title>
+  <script src='https://unpkg.com/jquery'></script>
+  <style>
+    #root {
+      width: 100%;
+      min-height: 400px;
+      border: 1px solid #ccc;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="root" contenteditable></div>
+  <script>
+    // rtf中提取图片信息
+    function extractImageDataFromRtf(rtfData) {
+      if (!rtfData) {
+        return [];
+      }
+      const regexPictureHeader = /{\\pict[\s\S]+?({\\\*\\blipuid\s?[\da-fA-F]+)[\s}]*/
+      const regexPicture = new RegExp('(?:(' + regexPictureHeader.source + '))([\\da-fA-F\\s]+)\\}', 'g');
+      const images = rtfData.match(regexPicture);
+      const result = [];
+
+      images && images.forEach(image => {
+        let imageType = false;
+        if (image.includes('\\pngblip')) {
+          imageType = 'image/png';
+        } else if (image.includes('\\jpegblip')) {
+          imageType = 'image/jpeg';
+        }
+
+        if (imageType) {
+          result.push({
+            hex: image.replace(regexPictureHeader, '').replace(/[^\da-fA-F]/g, ''),
+            type: imageType
+          });
+        }
+      })
+      return result;
+    }
+
+    // 将hex格式转化为base64
+    function convertHexToBase64(hexString) {
+      return btoa(
+        hexString.match(/\w{2}/g)
+          .map(char => String.fromCharCode(parseInt(char, 16)))
+          .join('')
+      );
+    }
+
+    // base64转图片File
+    const base64ToFile = (base64, fileName = 'myimg') => {
+      // 将base64按照 , 进行分割 将前缀  与后续内容分隔开
+      let data = base64.split(','),
+        // 利用正则表达式 从前缀中获取图片的类型信息（image/png、image/jpeg、image/webp等）
+        type = data[0].match(/:(.*?);/)[1],
+        // 从图片的类型信息中 获取具体的文件格式后缀（png、jpeg、webp）
+        suffix = type.split('/')[1],
+        // 使用atob()对base64数据进行解码  结果是一个文件数据流 以字符串的格式输出
+        bstr = window.atob(data[1]),
+        // 获取解码结果字符串的长度
+        n = bstr.length,
+        // 根据解码结果字符串的长度创建一个等长的整形数字数组
+        // 但在创建时 所有元素初始值都为 0
+        u8arr = new Uint8Array(n)
+
+      // 将整形数组的每个元素填充为解码结果字符串对应位置字符的UTF-16 编码单元
+      while (n--) {
+        // charCodeAt()：获取给定索引处字符对应的 UTF-16 代码单元
+        u8arr[n] = bstr.charCodeAt(n)
+      }
+      // 利用构造函数创建File文件对象
+      // new File(bits, name, options)
+      const file = new File([u8arr], `${fileName}.${suffix}`, {
+        type: type
+      })
+
+      // 返回file
+      return file
+    }
+
+
+    const upload = async (file) => {
+      let form = new FormData
+      form.append('file', file)
+      const { url, code } = await fetch('http://localhost:3001/upload', {
+        method: 'POST',
+        body: form
+      }).then(res => res.json())
+      if (code === 0) {
+        return url
+      }
+    }
+
+    let div = $('#root')
+    div.on('paste', ({ originalEvent: e }) => {
+      const { items } = e.clipboardData
+
+      console.log('批量粘贴');
+      // const pastDom = evt.clipboardData.getData('text/html');
+      const rtf = e.clipboardData.getData('text/rtf');
+      const hexStrings = extractImageDataFromRtf(rtf);
+      // 获取base64图片数据
+      const base64Images = hexStrings.map((hexObj, ind) => {
+        return `data:${hexObj.type};base64,${convertHexToBase64(hexObj.hex)}`;
+      })
+      setTimeout(async () => {
+        let files = []
+        const imgs = [...$('img[src^=file]')]
+        for (let ind in imgs) {
+          const img = imgs[ind]
+          let par = img.parentNode
+          const file = base64ToFile(base64Images[ind])
+          const url = await upload(file)
+          if (par) {
+            let newImg = document.createElement('img')
+            newImg.src = url
+            par.replaceChild(newImg, img)
+          }
+        }
+
+      })
+    })
+  </script>
+</body>
+
+</html>
